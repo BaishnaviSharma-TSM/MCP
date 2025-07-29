@@ -12,23 +12,23 @@ interface Product {
 const handler = createMcpHandler(
   (server) => {
     //tool1-search product
-    // server.tool(
-    //   "searchProducts",
-    //   "search product by name",
-    //   {
-    //     name: z.string(),
-    //   },
-    //   async ({ name }) => {
-    //     return {
-    //       content: [
-    //         {
-    //           type: "text",
-    //           text: `Searching for products with name: ${name}`,
-    //         },
-    //       ],
-    //     };
-    //   }
-    // );
+    server.tool(
+      "searchProducts",
+      "search product by name",
+      {
+        name: z.string(),
+      },
+      async ({ name }) => {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Searching for products with name: ${name}`,
+            },
+          ],
+        };
+      }
+    );
     //tool2- find product
     server.tool(
       "findProducts",
