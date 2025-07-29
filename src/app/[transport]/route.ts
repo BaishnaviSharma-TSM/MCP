@@ -100,7 +100,7 @@ const handler = createMcpHandler(
         }).then((m) => m.default);
 
         const product = products.find(
-          (p: any) => p.name.toLowerCase() === name.toLowerCase()
+          (p: Product) => p.name.toLowerCase() === name.toLowerCase()
         );
 
         if (!product) {
@@ -141,7 +141,7 @@ const handler = createMcpHandler(
         }).then((m) => m.default);
 
         const filtered = products.filter(
-          (p: any) => p.category?.toLowerCase() === category.toLowerCase()
+          (p: Product) => p.category?.toLowerCase() === category.toLowerCase()
         );
 
         if (filtered.length === 0) {
@@ -162,7 +162,7 @@ const handler = createMcpHandler(
               text:
                 `📦 Products in '${category}':\n\n` +
                 filtered
-                  .map((p: any) => `- ${p.name} ($${p.price})`)
+                  .map((p: Product) => `- ${p.name} ($${p.price})`)
                   .join("\n"),
             },
           ],
@@ -192,7 +192,7 @@ const handler = createMcpHandler(
           }).then((m) => m.default);
 
           const product = products.find(
-            (p: any) => p.name.toLowerCase() === name.toLowerCase()
+            (p: Product) => p.name.toLowerCase() === name.toLowerCase()
           );
 
           if (!product) {
@@ -207,13 +207,17 @@ const handler = createMcpHandler(
           }
 
           // Load existing cart or initialize empty
-          const cartFilePath = "./src/data/cart.json";
-          let cart: any[] = [];
+          // const cartFilePath = "./src/data/cart.json";
+          let cart: Product[] = [];
 
           try {
-            cart = await import(cartFilePath, { with: { type: "json" } }).then(
-              (m) => m.default
-            );
+            // cart = await import(cartFilePath, { with: { type: "json" } }).then(
+            //   (m) => m.default
+            // );
+
+           cart = await import("../../data/product.json", {
+              with: { type: "json" },
+            }).then((m) => m.default);
           } catch {
             // If file does not exist or fails, initialize empty
             cart = [];
@@ -221,22 +225,23 @@ const handler = createMcpHandler(
 
           // Add product to cart
           cart.push(product);
-
+console.log("Product added to cart:", product);
+          console.log("Current cart contents:", cart);
           // Save cart
-          await fs.writeFile(
-            cartFilePath,
-            JSON.stringify(cart, null, 2),
-            "utf-8"
-          );
+          // await fs.writeFile(
+          //   cartFilePath,
+          //   JSON.stringify(cart, null, 2),
+          //   "utf-8"
+          // );
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: `✅ "${product.name}" has been added to your cart.`,
-              },
-            ],
-          };
+       return {
+         content: [
+           {
+             type: "text",
+             text: `✅ "${product.name}" has been added to your cart. Cart now has ${cart.length} item(s).`,
+           },
+         ],
+       };
         } catch (err) {
           return {
             content: [
