@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { createMcpHandler } from "@vercel/mcp-adapter";
+import fs from "node:fs/promises";
 
 interface Product {
   name: string;
   price: number;
   description?: string;
   category?: string;
-  id:number
+  id: number;
 }
 
 const handler = createMcpHandler(
@@ -57,7 +58,7 @@ const handler = createMcpHandler(
             return {
               content: [
                 { type: "text", text: `No products found for "${name}"` },
-              ]
+              ],
             };
           }
 
@@ -76,6 +77,174 @@ const handler = createMcpHandler(
         } catch (err) {
           return {
             content: [{ type: "text", text: "Error searching for product" }],
+          };
+        }
+      }
+    );
+    server.tool(
+      "getProductDetails",
+      "Get detailed info about a product from the product database",
+      {
+        name: z.string().describe("Exact name of the product"),
+      },
+      {
+        title: "Get Product Details",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+        destructiveHint: false,
+      },
+      async ({ name }) => {
+        const products = await import("../../data/product.json", {
+          with: { type: "json" },
+        }).then((m) => m.default);
+
+        const product = products.find(
+          (p: any) => p.name.toLowerCase() === name.toLowerCase()
+        );
+
+        if (!product) {
+          return {
+            content: [
+              { type: "text", text: `No product found with name "${name}"` },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `🛍️ ${product.name}\n💵 $${product.price}\n📝 ${product.description}`,
+            },
+          ],
+        };
+      }
+    );
+    // Get products by category tool
+    server.tool(
+      "getProductsByCategory",
+      "Get products by category",
+      {
+        category: z.string().describe("Exact name of the product"),
+      },
+      {
+        title: "Get Products by Category",
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+      async ({ category }) => {
+        const products = await import("../../data/product.json", {
+          with: { type: "json" },
+        }).then((m) => m.default);
+
+        const filtered = products.filter(
+          (p: any) => p.category?.toLowerCase() === category.toLowerCase()
+        );
+
+        if (filtered.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No products found in category '${category}'.`,
+              },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `📦 Products in '${category}':\n\n` +
+                filtered
+                  .map((p: any) => `- ${p.name} ($${p.price})`)
+                  .join("\n"),
+            },
+          ],
+        };
+      }
+    );
+
+    // Add to cart tool
+    server.tool(
+      "addToCart",
+      "Add a product to the cart by name",
+      {
+        name: z.string().describe("Name of the product to add to the cart"),
+      },
+      {
+        title: "Add to Cart",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      async ({ name }) => {
+        try {
+          // Load products
+          const products = await import("../../data/product.json", {
+            with: { type: "json" },
+          }).then((m) => m.default);
+
+          const product = products.find(
+            (p: any) => p.name.toLowerCase() === name.toLowerCase()
+          );
+
+          if (!product) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Product "${name}" not found in database.`,
+                },
+              ],
+            };
+          }
+
+          // Load existing cart or initialize empty
+          const cartFilePath = "./src/data/cart.json";
+          let cart: any[] = [];
+
+          try {
+            cart = await import(cartFilePath, { with: { type: "json" } }).then(
+              (m) => m.default
+            );
+          } catch {
+            // If file does not exist or fails, initialize empty
+            cart = [];
+          }
+
+          // Add product to cart
+          cart.push(product);
+
+          // Save cart
+          await fs.writeFile(
+            cartFilePath,
+            JSON.stringify(cart, null, 2),
+            "utf-8"
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ "${product.name}" has been added to your cart.`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "❌ Error adding product to cart.",
+              },
+            ],
           };
         }
       }
@@ -99,7 +268,6 @@ const handler = createMcpHandler(
     streamableHttpEndpoint: "/mcp",
     verboseLogs: true,
     maxDuration: 60,
-    
   }
 );
 
