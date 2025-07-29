@@ -1,0 +1,13 @@
+{
+	"servers": {
+		"server-one-f83bb3cd": {
+			"url": "https://mcp-server-1-d6ek.vercel.app/mcp",
+			"type": "http"
+		},
+		"my-mcp-server-two-d61db1fd": {
+			"url": "https://mcp-server-1-d6ek.vercel.app/mcp",
+			"type": "http"
+		}
+	},
+	"inputs": []
+}
