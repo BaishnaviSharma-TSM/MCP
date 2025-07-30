@@ -494,6 +494,138 @@ const handler = createMcpHandler(
         }
       }
     );
+
+    // Tool 8 - Add To whishlist
+    server.tool(
+      "addToWishlist",
+      "Add product to wishlist",
+      {
+        productName: z.string(),
+        userEmail: z.string().email().default("default@user.com"),
+      },
+      {
+        title: "Add to Wishlist",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      async ({ productName, userEmail }) => {
+        try {
+          if (redis.status !== "ready") await redis.connect();
+
+          // Find product
+          const products = await import("../../data/product.json", {
+            with: { type: "json" },
+          }).then((m) => m.default as Product[]);
+
+          const product = products.find(
+            (p) => p.name.toLowerCase() === productName.toLowerCase()
+          );
+          if (!product) {
+            return {
+              content: [
+                { type: "text", text: `❌ Product "${productName}" not found` },
+              ],
+            };
+          }
+
+          const wishlistKey = `wishlist:${userEmail}`;
+          const existing = await redis.get(wishlistKey);
+          const wishlist: Product[] = existing ? JSON.parse(existing) : [];
+
+          if (wishlist.some((item) => item.id === product.id)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `💝 "${product.name}" already in wishlist!`,
+                },
+              ],
+            };
+          }
+
+          wishlist.push(product);
+          await redis.setex(wishlistKey, 86400 * 30, JSON.stringify(wishlist));
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `💝 "${product.name}" added to wishlist! (${wishlist.length} items)`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Error: ${
+                  err instanceof Error ? err.message : "Unknown"
+                }`,
+              },
+            ],
+          };
+        }
+      }
+    );
+
+    // Tool 9 - View Wishlist
+    server.tool(
+      "viewWishlist",
+      "View wishlist contents",
+      {
+        userEmail: z.string().email().default("default@user.com"),
+      },
+      {
+        title: "View Wishlist",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      async ({ userEmail }) => {
+        try {
+          if (redis.status !== "ready") await redis.connect();
+
+          const wishlistData = await redis.get(`wishlist:${userEmail}`);
+          if (!wishlistData) {
+            return {
+              content: [{ type: "text", text: "💝 Your wishlist is empty" }],
+            };
+          }
+
+          const wishlist: Product[] = JSON.parse(wishlistData);
+          const total = wishlist.reduce((sum, item) => sum + item.price, 0);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `💝 Your Wishlist (${wishlist.length} items):\n\n` +
+                  wishlist
+                    .map((item, i) => `${i + 1}. ${item.name} - $${item.price}`)
+                    .join("\n") +
+                  `\n\n💰 Total Value: $${total.toFixed(2)}`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Error: ${
+                  err instanceof Error ? err.message : "Unknown"
+                }`,
+              },
+            ],
+          };
+        }
+      }
+    );
   },
   {
     capabilities: {
@@ -518,6 +650,12 @@ const handler = createMcpHandler(
         },
         clearCart: {
           description: "Clear cart contents from Redis",
+        },
+        addToWishlist: {
+          description: "Add a product to the wishlist",
+        },
+        viewWishlist: {
+          description: "View wishlist contents",
         },
       },
     },
