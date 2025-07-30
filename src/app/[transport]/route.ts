@@ -534,7 +534,11 @@ const handler = createMcpHandler(
           const existing = await redis.get(wishlistKey);
           const wishlist: Product[] = existing ? JSON.parse(existing) : [];
 
-          if (wishlist.some((item) => item.id === product.id)) {
+          if (
+            wishlist.some(
+              (item) => item.name.toLowerCase() === product.name.toLowerCase()
+            )
+          ) {
             return {
               content: [
                 {
