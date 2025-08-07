@@ -80,7 +80,7 @@ const handler = createMcpHandler(
       "findProducts",
       "find for a product by name from the product database",
       {
-        name: z.string().describe("User input for the product name"),
+        name: z.string().describe("User input for the product name to find"),
       },
       {
         title: "Find Product",
