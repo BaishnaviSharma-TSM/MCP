@@ -1,10 +1,10 @@
 {
 	"servers": {
-		"server-one-f83bb3cd": {
+		"my-mcp-server-two-d61db1fd": {
 			"url": "https://mcp-server-1-d6ek.vercel.app/mcp",
 			"type": "http"
 		},
-		"my-mcp-server-two-d61db1fd": {
+		"server-three-a0641846": {
 			"url": "https://mcp-server-1-d6ek.vercel.app/mcp",
 			"type": "http"
 		}
