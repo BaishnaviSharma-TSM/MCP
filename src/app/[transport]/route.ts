@@ -12,7 +12,7 @@ interface Product {
 
 // Initialize Redis connection with proper error handling
 const redis = new Redis({
-  host: "34.45.44.8",
+  host: "34.51.188.225",
   port: 6379,
   maxRetriesPerRequest: 3,
   connectTimeout: 10000,
@@ -665,7 +665,7 @@ const handler = createMcpHandler(
     },
   },
   {
-    redisUrl: `redis://34.45.44.8:6379`,
+    redisUrl: `redis://34.51.188.225:6379`,
     sseEndpoint: "/sse",
     streamableHttpEndpoint: "/mcp",
     verboseLogs: true,
