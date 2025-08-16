@@ -17,6 +17,18 @@ const WC_BASE = "https://www.testylconsulting.com/wp-json/wc/store";
 
 // ---- Helpers ---------------------------------------------------------------
 
+// ---- Helpers ---------------------------------------------------------------
+
+function isWooErrorBody(
+  obj: unknown
+): obj is { message?: string; code?: string } {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    ("message" in obj || "code" in obj)
+  );
+}
+
 async function wcFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${WC_BASE}${path}`, {
     ...options,
@@ -27,8 +39,7 @@ async function wcFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
   });
 
-  // Try to parse json body even on errors to surface Woo errors
-  let body: any = null;
+  let body: unknown = null;
   try {
     body = await res.json();
   } catch {
@@ -36,9 +47,14 @@ async function wcFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    const message =
-      (body && (body.message || body.code)) ||
-      `${res.status} ${res.statusText}`;
+    let message = `${res.status} ${res.statusText}`;
+    if (isWooErrorBody(body)) {
+      if (typeof body.message === "string") {
+        message = body.message;
+      } else if (typeof body.code === "string") {
+        message = body.code;
+      }
+    }
     throw new Error(`WooCommerce API error: ${message}`);
   }
 
