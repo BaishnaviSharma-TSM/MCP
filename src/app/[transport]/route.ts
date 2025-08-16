@@ -1,699 +1,317 @@
+// src/app/api/mcp/route.ts
 import { z } from "zod";
 import { createMcpHandler } from "@vercel/mcp-adapter";
-import Redis from "ioredis";
 
-interface Product {
-  name: string;
-  price: number;
-  description?: string;
-  category?: string;
-  id: number;
+/**
+ * WooCommerce Store API base URL (no Redis)
+ * Examples used below:
+ *  - GET  /products?search=term
+ *  - GET  /products?page=1&per_page=10
+ *  - GET  /products/{id}
+ *  - GET  /cart
+ *  - POST /cart/add-item
+ *  - POST /cart/remove-item/{key}
+ *  - DELETE /cart/items
+ */
+const WC_BASE = "https://www.testylconsulting.com/wp-json/wc/store";
+
+// ---- Helpers ---------------------------------------------------------------
+
+async function wcFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${WC_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  // Try to parse json body even on errors to surface Woo errors
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {
+    // ignore parse error; non-JSON responses are rare but possible
+  }
+
+  if (!res.ok) {
+    const message =
+      (body && (body.message || body.code)) ||
+      `${res.status} ${res.statusText}`;
+    throw new Error(`WooCommerce API error: ${message}`);
+  }
+
+  return body as T;
 }
 
-// Initialize Redis connection with proper error handling
-const redis = new Redis({
-  host: "34.51.188.225",
-  port: 6379,
-  maxRetriesPerRequest: 3,
-  connectTimeout: 10000,
-  lazyConnect: true,
-  keepAlive: 30000,
-});
+// ---- Types matching common Store API shapes (minimal) ----------------------
 
-// Add Redis connection event handlers
-redis.on("connect", () => {
-  console.log("✅ Connected to Redis server");
-});
+type WCImage = { id: number; src: string; alt?: string };
+type WCCategory = { id: number; name: string };
 
-redis.on("ready", () => {
-  console.log("🚀 Redis is ready to accept commands");
-});
+interface WCProduct {
+  id: number;
+  name: string;
+  description?: string;
+  short_description?: string;
+  price?: string; // Store API often returns stringified price
+  prices?: {
+    price: string;
+    regular_price: string;
+    sale_price: string;
+    currency_code: string;
+  };
+  categories?: WCCategory[];
+  images?: WCImage[];
+}
 
-redis.on("error", (err) => {
-  console.error("❌ Redis connection error:", err.message);
-});
+interface WCCart {
+  items: Array<{
+    key: string; // cart item key required for remove
+    quantity: number;
+    id: number; // product id
+    name: string;
+    totals?: {
+      line_total: string;
+    };
+    images?: WCImage[];
+  }>;
+  totals?: {
+    total_items: string;
+    total_price: string;
+    currency_code?: string;
+  };
+}
 
-redis.on("close", () => {
-  console.log("📴 Redis connection closed");
-});
-
-redis.on("reconnecting", () => {
-  console.log("🔄 Reconnecting to Redis...");
-});
+// ---- MCP Handler -----------------------------------------------------------
 
 const handler = createMcpHandler(
   (server) => {
-    // Tool 1 - Search product
+    // 1) Search products by keyword
     server.tool(
       "searchProducts",
-      "search product by name",
+      "Search WooCommerce products by keyword",
       {
-        name: z.string().describe("Product name to search for"),
+        query: z.string().describe("Keyword to search for"),
+        page: z.number().int().positive().default(1),
+        per_page: z.number().int().positive().max(100).default(10),
       },
-      async ({ name }) => {
-        try {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Searching for products with name: ${name}`,
-              },
-            ],
-          };
-        } catch (error) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error searching for products: ${
-                  error instanceof Error ? error.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
+      async ({ query, page, per_page }) => {
+        const products = await wcFetch<WCProduct[]>(
+          `/products?search=${encodeURIComponent(
+            query
+          )}&page=${page}&per_page=${per_page}`
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                products.length === 0
+                  ? `No products found for "${query}".`
+                  : products
+                      .map(
+                        (p) =>
+                          `• ${p.name} (ID: ${p.id})` +
+                          (p.prices?.price ? ` — ${p.prices.price}` : "")
+                      )
+                      .join("\n"),
+            },
+          ],
+        };
       }
     );
 
-    // Tool 2 - Find product
-    server.tool(
-      "findProducts",
-      "find for a product by name from the product database",
-      {
-        name: z.string().describe("User input for the product name to find"),
-      },
-      {
-        title: "Find Product",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-      async ({ name }) => {
-        try {
-          const products = await import("../../data/product.json", {
-            with: { type: "json" },
-          }).then((m) => m.default as Product[]);
-
-          const result = products.filter((product: Product) =>
-            product.name.toLowerCase().includes(name.toLowerCase())
-          );
-
-          if (result.length === 0) {
-            return {
-              content: [
-                { type: "text", text: `No products found for "${name}"` },
-              ],
-            };
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `Found ${result.length} product(s):\n\n` +
-                  result
-                    .map((p: Product) => `- ${p.name} (Price: $${p.price})`)
-                    .join("\n"),
-              },
-            ],
-          };
-        } catch (err) {
-          console.error("Error in findProducts:", err);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error searching for product: ${
-                  err instanceof Error ? err.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
-      }
-    );
-
-    // Tool 3 - Get product details
+    // 2) Get product details by ID
     server.tool(
       "getProductDetails",
-      "Get detailed info about a product from the product database",
+      "Get detailed info about a product by ID",
       {
-        name: z.string().describe("Exact name of the product"),
+        productId: z.number().describe("WooCommerce product ID"),
       },
-      {
-        title: "Get Product Details",
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: true,
-        destructiveHint: false,
-      },
-      async ({ name }) => {
-        try {
-          const products = await import("../../data/product.json", {
-            with: { type: "json" },
-          }).then((m) => m.default as Product[]);
+      async ({ productId }) => {
+        const p = await wcFetch<WCProduct>(`/products/${productId}`);
 
-          const product = products.find(
-            (p: Product) => p.name.toLowerCase() === name.toLowerCase()
-          );
+        const cats = p.categories?.map((c) => c.name).join(", ") || "—";
+        const price =
+          p.prices?.price ??
+          p.price ??
+          (p.prices ? JSON.stringify(p.prices) : "—");
+        const images = p.images?.map((i) => i.src).join("\n") || "—";
 
-          if (!product) {
-            return {
-              content: [
-                { type: "text", text: `No product found with name "${name}"` },
-              ],
-            };
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `🛍️ ${product.name}\n💵 $${product.price}\n📝 ${
-                  product.description || "No description available"
-                }`,
-              },
-            ],
-          };
-        } catch (err) {
-          console.error("Error in getProductDetails:", err);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error getting product details: ${
-                  err instanceof Error ? err.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `🛍️ ${p.name} (ID: ${p.id})`,
+                `💵 Price: ${price}`,
+                `🏷️ Categories: ${cats}`,
+                `📝 ${p.short_description || "No short description."}`,
+                `🖼️ Images:\n${images}`,
+              ].join("\n"),
+            },
+          ],
+        };
       }
     );
 
-    // Tool 4 - Get products by category
+    // 3) List products (paginated)
     server.tool(
-      "getProductsByCategory",
-      "Get products by category",
+      "listProducts",
+      "List products with pagination",
       {
-        category: z.string().describe("Category name to filter by"),
+        page: z.number().int().positive().default(1),
+        per_page: z.number().int().positive().max(100).default(10),
       },
-      {
-        title: "Get Products by Category",
-        readOnlyHint: true,
-        idempotentHint: true,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-      async ({ category }) => {
-        try {
-          const products = await import("../../data/product.json", {
-            with: { type: "json" },
-          }).then((m) => m.default as Product[]);
+      async ({ page, per_page }) => {
+        const products = await wcFetch<WCProduct[]>(
+          `/products?page=${page}&per_page=${per_page}`
+        );
 
-          const filtered = products.filter(
-            (p: Product) => p.category?.toLowerCase() === category.toLowerCase()
-          );
-
-          if (filtered.length === 0) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `No products found in category '${category}'.`,
-                },
-              ],
-            };
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `📦 Products in '${category}':\n\n` +
-                  filtered
-                    .map((p: Product) => `- ${p.name} ($${p.price})`)
-                    .join("\n"),
-              },
-            ],
-          };
-        } catch (err) {
-          console.error("Error in getProductsByCategory:", err);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error getting products by category: ${
-                  err instanceof Error ? err.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                products.length === 0
+                  ? "No products."
+                  : products
+                      .map(
+                        (p) =>
+                          `• ${p.name} (ID: ${p.id})` +
+                          (p.prices?.price ? ` — ${p.prices.price}` : "")
+                      )
+                      .join("\n"),
+            },
+          ],
+        };
       }
     );
 
-    // Tool 5 - Add to cart (with Redis integration)
+    // 4) Add product to cart
     server.tool(
       "addToCart",
-      "Add a product to the cart by name",
+      "Add a product to the WooCommerce cart",
       {
-        name: z.string().describe("Name of the product to add to the cart"),
+        productId: z.number().describe("WooCommerce product ID"),
+        quantity: z.number().int().positive().default(1),
       },
-      {
-        title: "Add to Cart",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-      async ({ name }) => {
-        try {
-          // Check Redis connection
-          if (redis.status !== "ready") {
-            await redis.connect();
-          }
+      async ({ productId, quantity }) => {
+        const cart = await wcFetch<WCCart>(`/cart/add-item`, {
+          method: "POST",
+          body: JSON.stringify({ id: productId, quantity }),
+        });
 
-          // Load products
-          const products = await import("../../data/product.json", {
-            with: { type: "json" },
-          }).then((m) => m.default as Product[]);
-
-          const product = products.find(
-            (p: Product) => p.name.toLowerCase() === name.toLowerCase()
-          );
-
-          if (!product) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Product "${name}" not found in database.`,
-                },
-              ],
-            };
-          }
-
-          // Redis cart key (simplified without userId)
-          const cartKey = "cart";
-
-          // Get existing cart from Redis
-          let cart: Product[] = [];
-          try {
-            const existingCart = await redis.get(cartKey);
-            if (existingCart) {
-              cart = JSON.parse(existingCart);
-            }
-          } catch (parseError) {
-            console.warn(
-              "Error parsing existing cart, starting fresh:",
-              parseError
-            );
-            cart = [];
-          }
-
-          // Add product to cart
-          cart.push(product);
-
-          // Save cart to Redis with expiration (24 hours = 86400 seconds)
-          await redis.setex(cartKey, 86400, JSON.stringify(cart));
-
-          // Also save individual cart item with timestamp for tracking
-          const cartItemKey = `cart:item:${Date.now()}`;
-          await redis.setex(
-            cartItemKey,
-            86400,
-            JSON.stringify({
-              ...product,
-              addedAt: new Date().toISOString(),
-            })
-          );
-
-          // Increment cart count
-          await redis.incr("cart:count");
-          await redis.expire("cart:count", 86400);
-
-          console.log("✅ Product added to Redis cart:", product.name);
-          console.log("📍 Cart key:", cartKey);
-          console.log("📊 Current cart size:", cart.length);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `✅ "${product.name}" has been added to your cart in Redis. Cart now has ${cart.length} item(s). Cart Key: ${cartKey}`,
-              },
-            ],
-          };
-        } catch (err) {
-          console.error("❌ Redis error in addToCart:", err);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `❌ Error adding product to cart: ${
-                  err instanceof Error ? err.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Added product ${productId} (x${quantity}) to cart.\nItems in cart: ${cart.items.length}`,
+            },
+          ],
+        };
       }
     );
 
-    // Tool 6 - View cart
+    // 5) View cart
+    server.tool("viewCart", "View current WooCommerce cart", {}, async () => {
+      const cart = await wcFetch<WCCart>(`/cart`);
+      const lines =
+        cart.items.length === 0
+          ? "🛒 Cart is empty."
+          : cart.items
+              .map(
+                (it, idx) =>
+                  `${idx + 1}. ${it.name} (ID: ${it.id}) x${
+                    it.quantity
+                  } — key: ${it.key}`
+              )
+              .join("\n");
+
+      const total =
+        cart.totals?.total_price ??
+        (cart.totals ? JSON.stringify(cart.totals) : "—");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${lines}\n\nTotal: ${total}`,
+          },
+        ],
+      };
+    });
+
+    // 6) Remove a single item from cart (requires cart item key)
     server.tool(
-      "viewCart",
-      "View current cart contents from Redis",
-      {},
+      "removeFromCart",
+      "Remove a specific item from WooCommerce cart (use item key from viewCart)",
       {
-        title: "View Cart",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
+        itemKey: z.string().describe("Cart item key (see viewCart output)"),
       },
-      async () => {
-        try {
-          // Check Redis connection
-          if (redis.status !== "ready") {
-            await redis.connect();
+      async ({ itemKey }) => {
+        const cart = await wcFetch<WCCart>(
+          `/cart/remove-item/${encodeURIComponent(itemKey)}`,
+          {
+            method: "POST",
           }
+        );
 
-          const cartKey = "cart";
-          const cartData = await redis.get(cartKey);
-
-          if (!cartData) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `🛒 Your cart is empty. Cart Key: ${cartKey}`,
-                },
-              ],
-            };
-          }
-
-          const cart: Product[] = JSON.parse(cartData);
-          const totalPrice = cart.reduce((sum, item) => sum + item.price, 0);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `🛒 Your Cart (${cart.length} items):\n\n` +
-                  cart
-                    .map(
-                      (item, index) =>
-                        `${index + 1}. ${item.name} - $${item.price}`
-                    )
-                    .join("\n") +
-                  `\n\n💰 Total: $${totalPrice.toFixed(
-                    2
-                  )}\n📍 Redis Key: ${cartKey}`,
-              },
-            ],
-          };
-        } catch (err) {
-          console.error("❌ Error in viewCart:", err);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `❌ Error retrieving cart: ${
-                  err instanceof Error ? err.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `🗑️ Removed item ${itemKey}. Items in cart: ${cart.items.length}`,
+            },
+          ],
+        };
       }
     );
 
-    // Tool 7 - Clear cart
+    // 7) Clear entire cart
     server.tool(
       "clearCart",
-      "Clear cart contents from Redis",
+      "Clear all items from WooCommerce cart",
       {},
-      {
-        title: "Clear Cart",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
       async () => {
-        try {
-          // Check Redis connection
-          if (redis.status !== "ready") {
-            await redis.connect();
-          }
+        const cart = await wcFetch<WCCart>(`/cart/items`, { method: "DELETE" });
 
-          const cartKey = "cart";
-          const countKey = "cart:count";
-
-          // Delete main cart and count
-          const deletedMain = await redis.del(cartKey);
-          const deletedCount = await redis.del(countKey);
-
-          // Also clear individual cart items
-          const itemKeys = await redis.keys("cart:item:*");
-          let deletedItems = 0;
-          if (itemKeys.length > 0) {
-            deletedItems = await redis.del(...itemKeys);
-          }
-
-          console.log(
-            `🗑️ Cleared cart - Main: ${deletedMain}, Count: ${deletedCount}, Items: ${deletedItems}`
-          );
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `🗑️ Cart cleared successfully. Removed keys: ${cartKey} (${deletedMain}), ${countKey} (${deletedCount}), and ${deletedItems} item keys.`,
-              },
-            ],
-          };
-        } catch (err) {
-          console.error("❌ Error in clearCart:", err);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `❌ Error clearing cart: ${
-                  err instanceof Error ? err.message : "Unknown error"
-                }`,
-              },
-            ],
-          };
-        }
-      }
-    );
-
-    // Tool 8 - Add To whishlist
-    server.tool(
-      "addToWishlist",
-      "Add product to wishlist",
-      {
-        productName: z.string(),
-        userEmail: z.string().email().default("default@user.com"),
-      },
-      {
-        title: "Add to Wishlist",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-      async ({ productName, userEmail }) => {
-        try {
-          if (redis.status !== "ready") await redis.connect();
-
-          // Find product
-          const products = await import("../../data/product.json", {
-            with: { type: "json" },
-          }).then((m) => m.default as Product[]);
-
-          const product = products.find(
-            (p) => p.name.toLowerCase() === productName.toLowerCase()
-          );
-          if (!product) {
-            return {
-              content: [
-                { type: "text", text: `❌ Product "${productName}" not found` },
-              ],
-            };
-          }
-
-          const wishlistKey = `wishlist:${userEmail}`;
-          const existing = await redis.get(wishlistKey);
-          const wishlist: Product[] = existing ? JSON.parse(existing) : [];
-
-          if (
-            wishlist.some(
-              (item) => item.name.toLowerCase() === product.name.toLowerCase()
-            )
-          ) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `💝 "${product.name}" already in wishlist!`,
-                },
-              ],
-            };
-          }
-
-          wishlist.push(product);
-          await redis.setex(wishlistKey, 86400 * 30, JSON.stringify(wishlist));
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `💝 "${product.name}" added to wishlist! (${wishlist.length} items)`,
-              },
-            ],
-          };
-        } catch (err) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `❌ Error: ${
-                  err instanceof Error ? err.message : "Unknown"
-                }`,
-              },
-            ],
-          };
-        }
-      }
-    );
-
-    // Tool 9 - View Wishlist
-    server.tool(
-      "viewWishlist",
-      "View wishlist contents",
-      {
-        userEmail: z.string().email().default("default@user.com"),
-      },
-      {
-        title: "View Wishlist",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-      async ({ userEmail }) => {
-        try {
-          if (redis.status !== "ready") await redis.connect();
-
-          const wishlistData = await redis.get(`wishlist:${userEmail}`);
-          if (!wishlistData) {
-            return {
-              content: [{ type: "text", text: "💝 Your wishlist is empty" }],
-            };
-          }
-
-          const wishlist: Product[] = JSON.parse(wishlistData);
-          const total = wishlist.reduce((sum, item) => sum + item.price, 0);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `💝 Your Wishlist (${wishlist.length} items):\n\n` +
-                  wishlist
-                    .map((item, i) => `${i + 1}. ${item.name} - $${item.price}`)
-                    .join("\n") +
-                  `\n\n💰 Total Value: $${total.toFixed(2)}`,
-              },
-            ],
-          };
-        } catch (err) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `❌ Error: ${
-                  err instanceof Error ? err.message : "Unknown"
-                }`,
-              },
-            ],
-          };
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `🧹 Cart cleared. Items in cart: ${cart.items.length}`,
+            },
+          ],
+        };
       }
     );
   },
   {
     capabilities: {
       tools: {
-        searchProducts: {
-          description: "Search for products by name",
+        searchProducts: { description: "Search products by keyword" },
+        getProductDetails: { description: "Get product details by ID" },
+        listProducts: { description: "List products (paginated)" },
+        addToCart: { description: "Add product to WooCommerce cart" },
+        viewCart: { description: "View current WooCommerce cart" },
+        removeFromCart: {
+          description: "Remove item from WooCommerce cart by key",
         },
-        findProducts: {
-          description: "Find for a product by name from the product database",
-        },
-        getProductDetails: {
-          description: "Get detailed info about a product",
-        },
-        getProductsByCategory: {
-          description: "Get products by category",
-        },
-        addToCart: {
-          description: "Add a product to the cart and save to Redis",
-        },
-        viewCart: {
-          description: "View current cart contents from Redis",
-        },
-        clearCart: {
-          description: "Clear cart contents from Redis",
-        },
-        addToWishlist: {
-          description: "Add a product to the wishlist",
-        },
-        viewWishlist: {
-          description: "View wishlist contents",
-        },
+        clearCart: { description: "Clear all WooCommerce cart items" },
       },
     },
   },
   {
-    redisUrl: `redis://34.51.188.225:6379`,
+    // No Redis, no redisUrl
     sseEndpoint: "/sse",
     streamableHttpEndpoint: "/mcp",
     verboseLogs: true,
     maxDuration: 60,
   }
 );
-
-// Graceful shutdown with proper cleanup
-process.on("SIGTERM", async () => {
-  console.log("📴 Shutting down gracefully...");
-  try {
-    await redis.quit();
-    console.log("✅ Redis connection closed");
-  } catch (err) {
-    console.error("❌ Error closing Redis:", err);
-  }
-});
-
-process.on("SIGINT", async () => {
-  console.log("📴 Received SIGINT, shutting down gracefully...");
-  try {
-    await redis.quit();
-    console.log("✅ Redis connection closed");
-    process.exit(0);
-  } catch (err) {
-    console.error("❌ Error closing Redis:", err);
-    process.exit(1);
-  }
-});
 
 export { handler as GET, handler as POST, handler as DELETE };
