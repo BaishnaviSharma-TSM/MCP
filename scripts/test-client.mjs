@@ -27,10 +27,8 @@ async function main() {
   const result = await client.listTools();
   console.log("Result", result);
 
-
   const cart = await client.callTool("viewCart", {});
   console.log("Cart", cart);
-
 }
 
 main();
