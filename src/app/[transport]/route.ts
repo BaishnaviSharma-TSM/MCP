@@ -50,4 +50,4 @@ function setup(server: any) {
 }
 
 const handler = createMcpHandler(setup);
-export default handler;
+export { handler as POST };
