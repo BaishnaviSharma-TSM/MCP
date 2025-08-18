@@ -4,7 +4,7 @@ import { createMcpHandler } from "@vercel/mcp-adapter";
 
 const WP_BASE = "https://www.testylconsulting.com/wp-json/tpi1-cart/v1";
 
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setup(server: any) {
   // --- addToCart tool ---
   server.tool(
