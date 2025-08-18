@@ -1,50 +1,53 @@
 // src/app/api/mcp/route.ts
 import { z } from "zod";
-// You can import from either package; both re-export the same API.
-// Prefer "mcp-handler" per the README.
-import { createMcpHandler } from "mcp-handler"; // or: "@vercel/mcp-adapter"
+import { createMcpHandler } from "@vercel/mcp-adapter";
 
 const WP_BASE = "https://www.testylconsulting.com/wp-json/tpi1-cart/v1";
 
-// Infer the correct setup fn type from createMcpHandler to keep TS happy.
-type Setup = Parameters<typeof createMcpHandler>[0];
 
-const setup: Setup = (server) => {
+function setup(server: any) {
   // --- addToCart tool ---
   server.tool(
     "addToCart",
-    "Add a product to cart by product ID and optional name",
     {
-      product_id: z.number(),
-      name: z.string().optional(),
-      quantity: z.number().default(1),
+      description: "Add a product to cart by product ID and optional name",
+      inputSchema: z.object({
+        product_id: z.number(),
+        name: z.string().optional(),
+        quantity: z.number().default(1),
+      }),
     },
-    async ({ product_id, name, quantity }) => {
+    async ({
+      product_id,
+      name,
+      quantity,
+    }: {
+      product_id: number;
+      name?: string;
+      quantity: number;
+    }) => {
       const res = await fetch(`${WP_BASE}/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ product_id, name, quantity }),
       });
-      const json = await res.json();
-      return { content: [{ type: "text", text: JSON.stringify(json) }] };
+      return await res.json();
     }
   );
 
   // --- viewCart tool ---
-  server.tool("viewCart", "View items in cart", {}, async () => {
-    const res = await fetch(`${WP_BASE}/view`);
-    const json = await res.json();
-    return { content: [{ type: "text", text: JSON.stringify(json) }] };
-  });
-};
+  server.tool(
+    "viewCart",
+    {
+      description: "View items in cart",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const res = await fetch(`${WP_BASE}/view`);
+      return await res.json();
+    }
+  );
+}
 
-const handler = createMcpHandler(
-  setup,
-  // (optional) server options
-  {},
-  // (optional) transport options; basePath should match your route location
-  { basePath: "/api", verboseLogs: true }
-);
-
-// Next.js App Router needs GET and POST named exports
-export { handler as GET, handler as POST };
+const handler = createMcpHandler(setup);
+export default handler;
