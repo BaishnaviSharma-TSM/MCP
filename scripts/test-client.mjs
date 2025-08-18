@@ -2,7 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 const origin =
-  "https://mcp-server-1-d6ek-gon5k2dt8-riteshs-projects-28bd743d.vercel.app";
+  // "https://mcp-server-1-d6ek-gon5k2dt8-riteshs-projects-28bd743d.vercel.app";
+  "https://mcp-server-1-d6ek-lo9y6jofi-riteshs-projects-28bd743d.vercel.app/";
 
 async function main() {
   const transport = new SSEClientTransport(new URL(`${origin}/sse`));
