@@ -3,7 +3,7 @@ export default function Home() {
     <>
       <div className="flex flex-col items-center justify-center ">
         <h1>
-          TESTING MCP
+          TESTING MCP with WOO commerce integration
         </h1>
         <h1 className="text-4xl">
           Welcome to the MCP Server latest with different redis
