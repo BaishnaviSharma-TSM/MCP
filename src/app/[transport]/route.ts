@@ -1,25 +1,30 @@
 import { z } from "zod";
 import { createMcpHandler } from "@vercel/mcp-adapter";
+import WooCommerceRestApi from "@woocommerce/woocommerce-rest-api";
 
-const WP_BASE = "https://www.testylconsulting.com/wp-json/tpi1-cart/v1";
+// Setup WooCommerce API client
+const api = new WooCommerceRestApi({
+  url: process.env.WC_BASE_URL!, // e.g. https://www.testylconsulting.com
+  consumerKey: process.env.WC_CONSUMER_KEY!,
+  consumerSecret: process.env.WC_CONSUMER_SECRET!,
+  version: "wc/v3",
+});
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setup(server: any) {
-  // --- searchProduct tool ---
+  // --- searchProducts tool ---
   server.tool(
     "searchProducts",
     {
-      description: "Search for products by name",
+      description: "Search for WooCommerce products by name",
       inputSchema: z.object({
         name: z.string(),
       }),
     },
     async ({ name }: { name: string }) => {
       try {
-        const res = await fetch(
-          `${WP_BASE}/search?name=${encodeURIComponent(name)}`
-        );
-        const products = await res.json();
+        const res = await api.get("products", { search: name });
+        const products = res.data;
         if (!products || products.length === 0) {
           return {
             success: false,
@@ -40,45 +45,34 @@ function setup(server: any) {
   server.tool(
     "addToCart",
     {
-      description: "Add product to WooCommerce cart by ID or name",
+      description: "Add product to WooCommerce cart (requires product_id)",
       inputSchema: z.object({
-        product_id: z.number().optional(),
-        name: z.string().optional(),
+        product_id: z.number(),
         quantity: z.number().default(1),
       }),
     },
     async ({
       product_id,
-      name,
       quantity,
     }: {
-      product_id?: number;
-      name?: string;
+      product_id: number;
       quantity: number;
     }) => {
-      if (!product_id && name) {
-        const searchRes = await fetch(
-          `${WP_BASE}/search?name=${encodeURIComponent(name)}`
-        );
-        const products = await searchRes.json();
-        if (!products || products.length === 0) {
-          return {
-            success: false,
-            message: `No product found with name "${name}"`,
-          };
-        }
-        product_id = products[0].id;
+      try {
+        // You can't add to cart via native WooCommerce API,
+        // so we create an Order with 'pending' status to simulate "cart".
+        const res = await api.post("orders", {
+          status: "pending",
+          line_items: [{ product_id, quantity }],
+        });
+
+        return { success: true, order: res.data };
+      } catch (err) {
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : "Failed to add to cart",
+        };
       }
-
-      if (!product_id)
-        return { success: false, message: "Product ID not provided or found" };
-
-      const addRes = await fetch(`${WP_BASE}/add`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product_id, quantity }),
-      });
-      return addRes.json();
     }
   );
 
@@ -86,12 +80,19 @@ function setup(server: any) {
   server.tool(
     "viewCart",
     {
-      description: "View items in WooCommerce cart",
+      description: "View current 'pending' WooCommerce orders (acting as cart)",
       inputSchema: z.object({}),
     },
     async () => {
-      const res = await fetch(`${WP_BASE}/view`);
-      return res.json();
+      try {
+        const res = await api.get("orders", { status: "pending" });
+        return { success: true, cart: res.data };
+      } catch (err) {
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : "Failed to view cart",
+        };
+      }
     }
   );
 
@@ -99,12 +100,25 @@ function setup(server: any) {
   server.tool(
     "clearCart",
     {
-      description: "Clear WooCommerce cart",
+      description: "Clear WooCommerce cart by deleting all 'pending' orders",
       inputSchema: z.object({}),
     },
     async () => {
-      const res = await fetch(`${WP_BASE}/clear`, { method: "POST" });
-      return res.json();
+      try {
+        const res = await api.get("orders", { status: "pending" });
+        const pendingOrders = res.data;
+
+        for (const order of pendingOrders) {
+          await api.delete(`orders/${order.id}`, { force: true });
+        }
+
+        return { success: true, cleared: pendingOrders.length };
+      } catch (err) {
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : "Failed to clear cart",
+        };
+      }
     }
   );
 }
