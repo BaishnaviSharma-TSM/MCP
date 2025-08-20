@@ -4,11 +4,18 @@ import WooCommerceRestApi from "@woocommerce/woocommerce-rest-api";
 
 // Setup WooCommerce API client
 const api = new WooCommerceRestApi({
-  url: process.env.WC_BASE_URL!, // e.g. https://www.testylconsulting.com
+  url: process.env.WC_BASE_URL || "https://www.testylconsulting.com", // e.g. https://www.testylconsulting.com
   consumerKey: process.env.WC_CONSUMER_KEY!,
   consumerSecret: process.env.WC_CONSUMER_SECRET!,
   version: "wc/v3",
 });
+
+console.log(
+  "WooCommerce API initialized with base URL:",
+  process.env.WC_CONSUMER_KEY,
+  process.env.WC_CONSUMER_SECRET,
+  process.env.WC_BASE_URL
+);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setup(server: any) {
