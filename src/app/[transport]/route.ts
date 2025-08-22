@@ -4,7 +4,7 @@ import WooCommerceRestApi from "@woocommerce/woocommerce-rest-api";
 
 // Setup WooCommerce API client
 const api = new WooCommerceRestApi({
-  url: process.env.WC_BASE_URL || "https://www.testylconsulting.com", // e.g. https://www.testylconsulting.com
+  url: process.env.WC_BASE_URL || "https://34.64.125.245", // e.g. https://www.testylconsulting.com
   consumerKey: process.env.WC_CONSUMER_KEY!,
   consumerSecret: process.env.WC_CONSUMER_SECRET!,
   version: "wc/v3",
